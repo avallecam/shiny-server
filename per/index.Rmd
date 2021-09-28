@@ -1,0 +1,68 @@
+---
+title: "Tableros de Comando para la Vigilancia en Salud Pública"
+author: "Centro Nacional de Epidemiología, Prevención y Control de Enfermedades - CDC Perú"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Tableros
+
+### COVID-19
+
+#### Incidencia y Número reproductivo efectivo (Rt) 
+
+- A nivel Nacional y Departamental con 
+casos [Confirmados](http://143.110.233.78:3838/c19/covidrtnac/) 
+y [Sospechosos](http://143.110.233.78:3838/c19/covidsymptrtnac/)
+
+![](gif/demo_rt_depa_01.gif){ width=85% }
+
+- A nivel Distrital con 
+casos [Confirmados](http://143.110.233.78:3838/c19/covidrtdep/)
+y [Sospechosos](http://143.110.233.78:3838/c19/covidsymptrtdep/)
+
+![](gif/demo_rt_depa_02.gif){ width=85% }
+
+#### Sistema de Reporte Temprano de Aberraciones (EARS)
+
+- A nivel Departamental y Distrital con
+casos [Confirmados](http://143.110.233.78:3838/c19/covidearsa/) y 
+[Sospechosos](http://143.110.233.78:3838/c19/covidsymptearsa/)
+
+![](gif/demo_ts_ears_04.gif){ width=85% }
+
+
+#### Áreas calientes por Expectation-based Scan Statistic
+
+- Por Departamento y Riesgo a nivel Distrital con
+casos [Confirmados](http://143.110.233.78:3838/c19/covidscanr/) y 
+[Sospechosos](http://143.110.233.78:3838/c19/covidsymptscanr/)
+
+![](gif/demo_st_scan_07.gif){ width=85% }
+
+### Malaria
+
+- Aberraciones en [Series de Tiempo](http://143.110.233.78:3838/vig/pltime/) a
+nivel Departamental
+
+![](gif/demo_ts_depa_03.gif){ width=85% }
+
+- [Áreas calientes](http://143.110.233.78:3838/vig/plscan/) por 
+Departamento y Riesgo a nivel Distrital
+
+![](gif/demo_st_scan_06.gif){ width=85% }
+
+## Contacto
+
+Dirección de Vigilancia en Salud Pública
