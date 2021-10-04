@@ -23,22 +23,22 @@ knitr::opts_chunk$set(
 #### Incidencia y Número reproductivo efectivo (Rt) 
 
 - A nivel Nacional y Departamental con 
-casos [Confirmados](../c19/covidrtnac/index.Rmd) 
-y [Sospechosos](../c19/covidsymptrtnac/index.Rmd)
+casos [Confirmados](https://github.com/avallecam/shiny-server/blob/master/c19/covidrtnac/index.Rmd) 
+y [Sospechosos](https://github.com/avallecam/shiny-server/blob/master/c19/covidsymptrtnac/index.Rmd)
 
 ![](gif/demo_rt_depa_01.gif){ width=85% }
 
 - A nivel Distrital con 
-casos [Confirmados](../c19/covidrtdep/index.Rmd)
-y [Sospechosos](../c19/covidsymptrtdep/index.Rmd)
+casos [Confirmados](https://github.com/avallecam/shiny-server/blob/master/c19/covidrtdep/index.Rmd)
+y [Sospechosos](https://github.com/avallecam/shiny-server/blob/master/c19/covidsymptrtdep/index.Rmd)
 
 ![](gif/demo_rt_depa_02.gif){ width=85% }
 
 #### Sistema de Reporte Temprano de Aberraciones (EARS)
 
 - A nivel Departamental y Distrital con
-casos [Confirmados](../c19/covidearsa/index.Rmd) y 
-[Sospechosos](../c19/covidsymptearsa/index.Rmd)
+casos [Confirmados](https://github.com/avallecam/shiny-server/blob/master/c19/covidearsa/index.Rmd) y 
+[Sospechosos](https://github.com/avallecam/shiny-server/blob/master/c19/covidsymptearsa/index.Rmd)
 
 ![](gif/demo_ts_ears_04.gif){ width=85% }
 
@@ -46,19 +46,19 @@ casos [Confirmados](../c19/covidearsa/index.Rmd) y
 #### Áreas calientes por Expectation-based Scan Statistic
 
 - Por Departamento y Riesgo a nivel Distrital con
-casos [Confirmados](../c19/covidscanr/index.Rmd) y 
-[Sospechosos](../c19/covidsymptscanr/index.Rmd)
+casos [Confirmados](https://github.com/avallecam/shiny-server/blob/master/c19/covidscanr/index.Rmd) y 
+[Sospechosos](https://github.com/avallecam/shiny-server/blob/master/c19/covidsymptscanr/index.Rmd)
 
 ![](gif/demo_st_scan_07.gif){ width=85% }
 
 ### Malaria
 
-- Aberraciones en [Series de Tiempo](../vig/pltime/index.Rmd) a
+- Aberraciones en [Series de Tiempo](https://github.com/avallecam/shiny-server/blob/master/vig/pltime/index.Rmd) a
 nivel Departamental
 
 ![](gif/demo_ts_depa_03.gif){ width=85% }
 
-- [Áreas calientes](../vig/plscan/index.Rmd) por 
+- [Áreas calientes](https://github.com/avallecam/shiny-server/blob/master/vig/plscan/index.Rmd) por 
 Departamento y Riesgo a nivel Distrital
 
 ![](gif/demo_st_scan_06.gif){ width=85% }
