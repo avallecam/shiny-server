@@ -1,0 +1,201 @@
+---
+title: "CDC Perú: Series de Tiempo - Malaria"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: cerulean
+    orientation: columns
+    vertical_layout: fill
+    social: menu
+    source_code: embed
+runtime: shiny
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#' add canal endémico a los mismos niveles
+#' subir a digital ocean
+```
+
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(shinyWidgets)
+library(plotly)
+library(sf)
+theme_set(theme_bw())
+```
+
+```{r}
+cases_forecast_country_observed <- 
+  read_rds("data/01-adm_00-forcast_observed.rds")
+cases_forecast_bydepartment_tidy <- 
+  read_rds("data/01-adm_01-forcast_observed.rds")
+```
+
+
+Nivel Nacional
+===================================
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Serie
+
+```{r}
+a <- cases_forecast_country_observed %>% 
+  cdcper::gg_forecast()
+plotly::ggplotly(a)
+```
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Tabla
+
+```{r}
+a <- cases_forecast_country_observed %>% 
+  filter(key!="actual") %>% 
+  mutate(index=as.character(index)) %>% 
+  select(-var_time02,-var_year) %>% 
+  pivot_wider(id_cols = -value, names_from = key, values_from = value) %>% 
+  select(forecast,everything())
+
+b <- a %>% filter(!is.na(observed)) %>% select(-(lo.80:hi.95),-forecast)
+
+c <- b %>% 
+  left_join(
+    a %>% filter(is.na(observed)) %>% select(-observed)
+  )
+
+c %>% cdcper::cdc_datatable_html()
+```
+
+
+Nivel Departamental (1)
+===================================
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Top 6
+
+```{r}
+a <- cases_forecast_bydepartment_tidy %>% 
+  mutate(var_admx=fct_reorder(var_admx,value,max),
+         var_admx=fct_rev(var_admx)) %>%
+  filter(as.numeric(var_admx)<=6) %>%
+  cdcper::gg_forecast() +
+  # gg_forecast(axis_x = epi_date) + # ----------------------- opcion 1
+  facet_wrap(~var_admx,scales = "free") +
+  theme(legend.position = "none")
+plotly::ggplotly(a)
+```
+
+
+Nivel Departamental (2)
+===================================
+
+```{r}
+pickerInput('strata_minor','Departamento', 
+            sort(unique(cases_forecast_bydepartment_tidy$var_admx)),
+            options = list(`actions-box` = TRUE),
+            multiple = F, 
+            selected = c("amazonas")
+            # multiple = T, 
+            # selected = c("amazonas","ica","ayacucho","callao")
+            )
+```
+
+```{r}
+# var_selected <- unique(cases_forecast_bydepartment_tidy$var_admx)[1]
+```
+
+
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Serie
+
+```{r}
+
+renderPlotly({
+  
+  var_selected <- input$strata_minor
+  
+  a <- cases_forecast_bydepartment_tidy %>% 
+    #filter
+    filter(var_admx==var_selected) %>% 
+    #continue
+    cdcper::gg_forecast()
+  plotly::ggplotly(a)
+  
+})
+
+```
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Tabla
+
+```{r}
+
+DT::renderDT({
+  
+  var_selected <- input$strata_minor
+  
+  a <- cases_forecast_bydepartment_tidy %>% 
+    #filter
+    filter(var_admx==var_selected) %>% 
+    #continue
+    filter(key!="actual") %>% 
+    mutate(index=as.character(index)) %>% 
+    select(-var_time02,-var_year) %>% 
+    pivot_wider(id_cols = -value, names_from = key, values_from = value) %>% 
+    select(forecast,everything())
+  
+  b <- a %>% filter(!is.na(observed)) %>% select(-(lo.80:hi.95),-forecast)
+  
+  c <- b %>% 
+    left_join(
+      a %>% filter(is.na(observed)) %>% select(-observed)
+    )
+  
+  c %>% cdcper::cdc_datatable_html()
+  
+})
+```
+
+
+
+Acerca
+===================================
+
+### Descomposición de las tendencias temporales y estacionales de una serie de tiempo
+
+#### Material y Métodos
+
+El método de pronóstico de casos o forecasting está basado en la descomposición de las tendencias temporales y estacionales de una serie de tiempo. Aquí aplicamos el algoritmo de pronóstico loess (STL) o modelo de suavizamiento exponencial a la serie de casos en el tiempo. Este proceso fue aplicado a nivel nacional y a nivel departamental. 
+Aplicamos la función `stlf` del paquete `forecast` 
+(Hyndman et al., 2008; Hyndman et al., 2019). 
+
+#### Referencias
+
+1. Hyndman RJ, Khandakar Y (2008). 
+“Automatic time series forecasting: the forecast package for R.”
+_Journal of Statistical Software_, *26*(3), 1-22. <URL:
+http://www.jstatsoft.org/article/view/v027i03>.
+
+2. Hyndman R, Athanasopoulos G, Bergmeir C, Caceres G, Chhay L, O'Hara-Wild M, 
+Petropoulos F, Razbash S, Wang E, Yasmeen F (2019). 
+_forecast: Forecasting functions for time series and linear
+models_. R package version 8.9, <URL: http://pkg.robjhyndman.com/forecast>.
+
+#### Equipo
+
+**Información:** Noti / CDC MINSA
+
+**Análisis:** CDC MINSA

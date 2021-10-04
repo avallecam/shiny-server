@@ -1,0 +1,1054 @@
+---
+title: "CDC Perú: Scan Statistics - COVID-19"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: cerulean
+    orientation: columns
+    vertical_layout: fill
+    social: menu
+    source_code: embed
+runtime: shiny
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#' tareas
+#' usar leaflet
+#' referencia: 
+#' "OneDrive\cdc_grupo_investigacion\covid_research\covid_serohotspots\06-leaflet_markets.Rmd"
+```
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(shinyWidgets)
+library(plotly)
+library(sf)
+library(lubridate)
+library(magrittr)
+library(sp)
+library(avallecam)
+library(scanstatistics)
+library(ggspatial)
+library(leaflet)
+library(leaflet.extras)
+theme_set(theme_bw())
+```
+
+```{r}
+# rute <- "data/rt_files/10-inc_rt_adm01.rds"
+# # file.info(rute)
+# # library(lubridate)
+# date_input <- lubridate::date(file.info(rute)$mtime)
+source("../run_shell.R")
+# system("../updata.sh")
+```
+
+```{r}
+library(aweek)
+set_week_start(7) #sunday -epi-
+# get_week_start()
+```
+
+
+
+```{r}
+# nivel adm03
+ubigeo_diccionario <- 
+  read_rds("data-raw/per4-shp_distritos_janitor.rds") %>% 
+  as.data.frame() %>%
+  select(starts_with("cd_"),starts_with("nm_"),-ends_with("_t")) %>% 
+  mutate(nm_depa=if_else(nm_prov=="lima","lima_metropolitana",nm_depa)) %>% 
+  as_tibble() #%>% 
+  # mutate(nm_depa=str_to_upper(nm_depa),
+  #        nm_depa=str_replace_all(nm_depa,"_"," "))
+
+# ubigeo_geometria <- 
+#   read_rds("data-raw/per4-shp_distritos_janitor.rds") %>% 
+#   mutate(nm_depa=if_else(nm_prov=="lima","lima_metropolitana",nm_depa)) %>% 
+#   select(nm_depa,nm_dist,cd_dist,geometry) %>% 
+#   # preidentify stratification variables
+#   rename(strata_major=nm_depa,
+#          strata_minor=nm_dist,
+#          strata_minor_code=cd_dist)
+```
+
+INPUT {.sidebar}
+===================================
+
+Inputs {data-width=300}
+-----------------------------------------------------------------------
+
+__Actualización: `r date_input`__
+
+__Fuente: Casos Confirmados__
+
+
+```{r}
+pickerInput('strata_minor','Departamento', sort(unique(ubigeo_diccionario$nm_depa)),
+            options = list(`actions-box` = TRUE),
+            multiple = F, 
+            selected = c("lima")
+            # multiple = T, 
+            # selected = c("amazonas","ica","ayacucho","callao")
+            )
+```
+
+<!-- a -->
+
+
+
+```{r}
+
+# import data -------------------------------------------------------------
+
+# __ map ---------------------------------------------------------------------
+
+# location <- "../asis_repositorio/shape_r/"
+# per0 <- st_read(paste0(location,"data-raw/gis/PER_adm0.shp"))
+# per1 <- st_read(paste0(location,"data-raw/gis/PER_adm1.shp"))
+# per2 <- st_read(paste0(location,"data-raw/gis/PER_adm2.shp"))
+
+# distrito poligons
+rutex <- "data-raw/per4-shp_distritos_janitor.rds"
+per4 <- 
+  # st_read(paste0(location,"data-raw/gis/Distritos.shp")) %>% 
+  read_rds(rutex) %>% 
+  # mutate(across(.cols = starts_with("nm_"),.fns = str_to_upper)) %>% 
+  # mutate(across(.cols = starts_with("nm_"),.fns = str_replace_all,"_"," ")) %>% 
+  mutate(nm_depa=if_else(nm_prov=="lima","lima_metropolitana",nm_depa)) %>% 
+  mutate(departamento=nm_depa,
+         provincia=nm_prov,
+         distrito=nm_dist,
+         ubigeo=cd_dist) #%>% 
+  # systematic_change_department_names()
+#per4 %>% glimpse()
+
+# distrito centroid points
+per4_centroid <- per4 %>% 
+  #select(ubigeo,departamento,provincia,distrito,CAP_DIST,geometry) %>% 
+  #st_as_sf(crs = 4326) %>% 
+  st_centroid() 
+```
+
+```{r,eval=FALSE}
+# __ population --------------------------------------------------------------
+
+#' we need population at district level form 2016 to 2019
+
+# location <- "../asis_repositorio/denom_r/"
+deno_distrito <- readxl::read_excel("data-raw/POBLACION 2014-2019.xlsx",
+                                    sheet = 2) %>% 
+  janitor::clean_names() %>% 
+  select(ano,ubigeo,#departamento,provincia,distrito,
+         total) %>% 
+  # arrange(ubigeo,ano) %>% 
+  arrange(ubigeo,desc(ano)) %>% 
+  # filter(str_starts(ubigeo,"16")) %>% 
+  complete(ubigeo,
+           # var_time02=full_seq(var_time02,1),
+           ano=full_seq(ano,1),
+           fill = list(total=NA_real_)) %>% 
+  group_by(ubigeo) %>% 
+  fill(total,.direction = "down") %>% 
+  fill(total,.direction = "up") %>% 
+  ungroup() 
+
+# deno_distrito %>% count(ano)
+# deno_distrito %>%
+#   filter(ubigeo=="060801")
+#   naniar::miss_var_summary()
+#   # print(n=100)
+#   # filter(is.na(total))
+```
+
+```{r}
+rute_2020 <- "data-raw/Poblacion Peru 2020 Dpto Prov Dist Final INEI-actualizado.xlsx"
+deno_distrito <- cdcper::read_reunis_total(file = rute_2020, year = 2020) %>% 
+  select(ubigeo,total)
+
+# deno_distrito
+```
+
+
+```{r,eval=FALSE}
+
+# __ population --------------------------------------------------------------
+
+malariadb_nominal <- read_rds("data/0000-malaria-adm03.rds") %>% 
+  rename(var_adm1=departamento,
+         var_adm2=provincia,
+         var_adm3=distrito,
+         var_year=ano, 
+         var_time02=mes, # opcion 2 
+         var_event_count = n) %>% 
+  mutate(var_adm1=fct_reorder(var_adm1,var_event_count),
+         var_adm1=fct_rev(var_adm1)) %>% 
+  # restringido por disponibilidad de denominadores
+  filter(magrittr::is_in(var_year,2014:2019)) #%>% 
+  # confirmo que si se une con todos los distritos
+  # left_join(
+  #   deno_distrito %>% 
+  #     select(var_year=ano,
+  #            ubigeo,
+  #            poblacion_total=total)
+  # )
+
+# malariadb_nominal %>% count(var_year)
+# malariadb_nominal %>% naniar::miss_var_summary()
+  # filter(is.na(poblacion_total))
+```
+
+```{r}
+malariadb_nominal <- read_rds("data/rt_files/10-inc_rt_adm03.rds") %>% 
+  select(1:3,tsibble_day) %>% 
+  unnest(cols = c(tsibble_day)) %>% 
+  mutate(week_incidence_case=aweek::date2week(date_incidence_case,
+                                              floor_day = TRUE,
+                                              numeric = TRUE#,
+                                              # factor = TRUE
+                                              )#,
+         # week_incidence_case=as.character(week_incidence_case)
+         ) %>% 
+  mutate(year=lubridate::year(date_incidence_case)#,
+         # month=lubridate::month(date_incidence_case)#,
+         # yearmonth=year+(month/12.9999)
+         ) %>% 
+  # count(year,month,var_year,frac) %>% 
+  # view()
+  mutate(year=case_when(
+    date_incidence_case<ymd(20210103) & week_incidence_case==53 ~ 2020,
+    TRUE ~ year
+  )) %>% 
+  select("var_year" = year,
+         "var_time02" = week_incidence_case,
+         "var_adm1" = strata_major,
+         "var_adm3" = strata_minor,
+         "var_event_count" = n,
+         "ubigeo" = strata_minor_code) %>% 
+  group_by(ubigeo,var_adm1,var_adm3,var_year,var_time02) %>% 
+  summarise(var_event_count=sum(var_event_count,na.rm = T)) %>% 
+  ungroup()
+# adm03 %>% count(week_incidence_case) %>% avallecam::print_inf()
+# adm03
+```
+
+
+```{r}
+# malariadb_nominal %>% 
+#   filter(var_year==max(var_year))
+# malariadb_nominal %>% 
+#   filter(as.numeric(var_adm1)<=6) %>% 
+#   count(var_adm1)
+
+timeserie_topi <- malariadb_nominal %>% 
+  filter(var_year==max(var_year)) %>% 
+  filter(is_in(var_time02,(max(var_time02)-3):max(var_time02))) # last month
+  # filter(var_time02==max(var_time02))
+# timeserie_topi %>% count(var_time02)
+
+malariadb_nominal_pre <- malariadb_nominal %>% 
+  mutate(time_strata=case_when(
+    var_year==max(timeserie_topi$var_year) &
+      is_in(var_time02,unique(timeserie_topi$var_time02)) ~ "year_last",
+    TRUE ~ "year_prev"
+  ))
+
+malariadb_nominal_sumlast <- malariadb_nominal_pre %>% 
+  # filter(time_strata=="year_last") %>% 
+  # count(var_time02)
+  group_by(ubigeo,time_strata) %>% #
+  summarise(summary=sum(var_event_count,na.rm = T)) %>%
+  ungroup() %>% 
+  filter(time_strata=="year_last") %>% 
+  mutate(summary=as.character(summary))
+
+malariadb_summary <- malariadb_nominal_pre %>% 
+  # filter(time_strata=="year_last") %>% 
+  # count(var_time02)
+  # group_by(ubigeo,time_strata,var_year,var_time02) %>% #
+  # summarise(sum_var_event_count=sum(var_event_count,na.rm = T)) %>% 
+  # ungroup() %>% 
+  group_by(ubigeo,time_strata) %>% 
+  skimr::skim(var_event_count) %>% 
+  # skimr::skim(sum_var_event_count) %>% 
+  as_tibble() %>% 
+  select(ubigeo,time_strata,numeric.p0,numeric.p50,numeric.p100) %>% 
+  filter(time_strata=="year_prev") %>% 
+  mutate(summary=case_when(
+    # time_strata=="year_last"~as.character(numeric.p50),
+    time_strata=="year_prev"~str_c(numeric.p50,"[",numeric.p0,"-",numeric.p100,"]")
+  )) %>% 
+  select(-numeric.p0,-numeric.p50,-numeric.p100) %>% 
+  union_all(malariadb_nominal_sumlast) %>% 
+  pivot_wider(id_cols = ubigeo, names_from = time_strata, values_from = summary) %>% 
+  mutate(year_last=as.numeric(year_last))
+  # count(var_time02)
+  # count(ubigeo,time_strata)
+
+# malariadb_summary %>% arrange(desc(year_last))
+```
+
+```{r}
+
+scanstat_01 <- function(var_name_depa="lima_metropolitana") {
+  
+  # definitife input --------------------------------------------------------
+
+# __ test 01 department ---------------------------------------------------
+
+# n_depa <- 2
+name_depa <- var_name_depa #"lima_metropolitana"
+pre_test <- # per4_centroid %>% 
+  malariadb_nominal %>% 
+  mutate(cod_adm1=str_replace(ubigeo,"(..).+","\\1")) %>% 
+  count(cod_adm1,var_adm1,sort = T) %>% 
+  filter(var_adm1==name_depa)
+test_department <- pre_test %>% 
+  pull(var_adm1) %>% 
+  # .[n_depa] %>% 
+  as.character()
+test_adm1ubigeo <- pre_test %>% 
+  pull(cod_adm1) %>% 
+  # .[n_depa] %>% 
+  as.character()
+
+# NM_map ------------------------------------------------------------------
+
+NM_map <- per4 %>% 
+  filter(departamento==test_department) %>% 
+  mutate(county=ubigeo) %>% 
+  mutate(distrito_clean=janitor::make_clean_names(distrito))
+
+# NM_geo ------------------------------------------------------------------
+
+per4_centroid_filter <- 
+  per4_centroid %>% 
+  filter(departamento==test_department) %>% 
+  select(ubigeo,cap_dist=nm_dist,geometry)
+
+NM_geo <- per4_centroid_filter %>% 
+  avallecam::st_coordinates_tidy() %>% 
+  as_tibble() %>% 
+  select(county=ubigeo,seat=cap_dist,seat_long=X,seat_lat=Y)
+
+# data(NM_geo)
+# NM_geo %>% as_tibble()
+
+# data(NM_map)
+# NM_map %>% as_tibble()
+
+# __ custom function -----------------------------------------------
+
+cdc_yearmonth_to_date <- function(data,year_integer,month_integer) {
+  data %>%
+    mutate(year_integer={{year_integer}},
+           month_integer={{month_integer}}) %>%
+    mutate(month_integer=if_else(str_length(month_integer)==1,
+                                str_c("0",month_integer),
+                                as.character(month_integer))) %>%
+    # string
+    mutate(epimonth_s=str_c(year_integer,"-",month_integer,"-01")) %>%
+    # to yearmonth
+    mutate(epimonth_t=tsibble::yearmonth(epimonth_s)) %>%
+    # to date
+    mutate(epimonth_d=lubridate::as_date(epimonth_s))
+}
+
+# NM_popcas ---------------------------------------------------------------
+  
+NM_popcas_pre <- malariadb_nominal %>% 
+  filter(var_adm1==test_department) %>% 
+  select(-(var_adm1:var_adm3)) %>% 
+  arrange(ubigeo,var_year,var_time02) %>% 
+  # unir denominadores
+  full_join(
+    deno_distrito %>% 
+      filter(str_starts(ubigeo,test_adm1ubigeo)) %>% 
+      select(#var_year=ano,
+             ubigeo,
+             poblacion_total=total)
+  ) %>% 
+  # naniar::miss_var_summary()
+  # filter(is.na(var_event_count))
+  # ojo: evitar valores perdidos 
+  mutate(
+    var_event_count=case_when(
+      is.na(var_event_count)~0L,
+      TRUE~var_event_count),
+    var_time02=case_when(
+      is.na(var_time02)~min(var_time02,na.rm = T),
+      TRUE~var_time02),
+    var_year=case_when(
+      is.na(var_year)~min(var_year,na.rm = T),
+      TRUE~var_year)
+  ) %>% 
+  # filter(is.na(var_year))
+  # count(var_year)
+  # naniar::miss_var_summary()
+  # filter(!is.na(var_year)) %>% 
+  # complete time-space
+  complete(ubigeo,
+           var_year=full_seq(var_year,1),
+           var_time02=full_seq(var_time02,1),
+           fill = list(var_event_count=0)) %>% 
+  # naniar::miss_var_summary()
+  # filter(is.na(poblacion_total))
+  # filter(ubigeo=="160103") %>% avallecam::print_inf()
+  group_by(ubigeo) %>%
+  fill(poblacion_total,.direction = "down") %>%
+  fill(poblacion_total,.direction = "up") %>%
+  ungroup() %>% 
+  # filter(ubigeo=="150138") %>% avallecam::print_inf()
+  # naniar::miss_var_summary()
+  # one date variable
+  cdcper::cdc_yearweek_to_date(year_integer = var_year,
+                               week_integer = var_time02) %>% 
+  # remove future observations
+  filter(epi_date<(today() - weeks(1))) %>% 
+  # skimr::skim()
+  # cdc_yearmonth_to_date(year_integer = var_year,
+  #                       month_integer = var_time02) %>% 
+  select(year=epi_date, #epimonth_t,
+         county=ubigeo,
+         population=poblacion_total,
+         count=var_event_count) %>% 
+  mutate(year=lubridate::as_date(year))
+
+retirar <- NM_popcas_pre %>% 
+  count(county) %>% 
+  left_join(
+    NM_geo %>% count(county) %>% rename(nn=n)
+  ) %>% 
+  filter(is.na(nn)) %>% 
+  pull(county)
+
+# NM_popcas_pre %>% 
+#   # arrange(county,year)
+#   filter(is_in(county,retirar))
+
+NM_popcas <- NM_popcas_pre %>% 
+  # arrange(county,year)
+  filter(!is_in(county,retirar)) #%>% 
+  # count(county)
+
+# # data(NM_popcas)
+# NM_popcas %>% as_tibble()
+# NM_popcas %>% count(year) # deben ser iguales valores de n todas las filas
+# NM_popcas %>% count(county) # deben ser iguales valores de n todas las filas
+# NM_popcas %>% naniar::miss_var_summary()
+# NM_popcas %>% 
+#   count(county) %>% 
+#   left_join(
+#     NM_geo %>% count(county) %>% rename(nn=n)
+#   ) %>% 
+#   filter(is.na(nn)) %>% 
+#   pull(county)
+#   # avallecam::print_inf()
+
+# NM_map %>% naniar::miss_var_summary()
+# NM_geo %>% naniar::miss_var_summary()
+# NM_popcas %>% naniar::miss_var_summary()
+
+# NM_map %>% skimr::skim()
+# NM_geo %>% skimr::skim()
+# NM_popcas %>% skimr::skim()
+# NM_map %>%
+#   full_join(
+#     NM_popcas %>% 
+#       group_by(county) %>% 
+#       summarise(count=sum(count)) %>% 
+#       ungroup()
+#     ) %>%
+#   ggplot(aes(fill = count),color = "grey") +
+#   geom_sf() +
+#   scale_fill_viridis_c(option = "magma")
+
+# ::::: RUN ::::: ---------------------------------------------------------------------
+
+# problem -----------------------------------------------------------------
+
+#' data from 1973-1991
+#' detect clusters during the years 1986-1989
+#' steps
+#' (0)
+#' define you department/county of interest
+#' analysis will be don with aggregated district data
+#' (1)
+#' retrieve cases from period time of interest
+#' trasform time-location-cases to matrix using df_to_matrix
+#' (2)
+#' zone, which is the name for the spatial component of a potential 
+#' outbreak cluster.
+#' zone, consists of one or more locations grouped together according to
+#' their similarity across features
+#' zone, uses the seat coordintates equivalent to the main ciy town in a county
+#' zone, define a prestablished k (example = 15)
+#' (3)
+#' estimate a baseline of cases usign a regression model (simple interpolation)
+#' then predict cases to obtain the expected cases per county of state throuout
+#' the years
+#' ( )
+#' use this 03 sources: cases, zone and expected -> run scan
+
+# expectation based -------------------------------------------------------
+
+# [core] parameters --------------------------------------------------------------
+
+real_range <- NM_popcas %>% 
+  summarise_at(.vars = vars(year),
+               .funs = c("min","max"))
+
+complete_time_range <- (real_range$min %m+% months(2)):(real_range$max) #complete time rage
+cluster_time_range <- (real_range$max %m-% months(1)):(real_range$max) #time range of interes
+k_predefined <- 10 #controvertial decision
+k_top_score_clusters <- 5
+
+baseline_time_range <- complete_time_range %>% 
+  enframe(name = NULL) %>% 
+  filter(!is_in(value,min(cluster_time_range):max(complete_time_range))) %>% 
+  pull(value)
+baseline_last <- max(baseline_time_range)
+
+# __ observed cases -------------------------------------------------------
+
+counts <- NM_popcas %>% 
+  as_tibble() %>% 
+  filter(magrittr::is_in(year,cluster_time_range)) %>% 
+  #filter(year >= 1986 & year < 1990) %>%
+  df_to_matrix(time_col = "year", 
+               location_col = "county", 
+               value_col = "count")
+# counts
+
+# __ spatial zones --------------------------------------------------------
+
+# Remove Cibola since cases have been counted towards Valencia. Ideally, this
+# should be accounted for when creating the zones.
+zones <- NM_geo %>%
+  #filter(county != "cibola") %>%
+  select(seat_long, seat_lat) %>%
+  as.matrix() %>%
+  spDists(x = ., y = ., longlat = TRUE) %>%
+  dist_to_knn(k = k_predefined) %>%
+  knn_zones
+
+# __ baselines ------------------------------------------------------------
+
+# create a model to estimate expected population 
+# mod <- glm(count ~ offset(log(population)) + 1 + I(year),
+#            family = poisson(link = "log"),
+#            data = NM_popcas)
+mod <- glm(count ~ offset(log(population)) + 1 + I(year - baseline_last),
+           family = poisson(link = "log"),
+           data = NM_popcas %>% filter(year < baseline_last+1))
+
+# mod %>% epitidy::epi_tidymodel_coef()
+# NM_popcas %>% filter(year < baseline_last+1) %>% as_tibble()
+# mod %>% broom::augment()
+
+# make an augment but only for the years of interest
+ebp_baselines <- NM_popcas %>% 
+  filter(is_in(year,cluster_time_range)) %>% 
+  #filter(year >= 1986 & year < 1990) %>%
+  mutate(mu = predict(mod, newdata = ., type = "response")) %>%
+  df_to_matrix(time_col = "year", 
+               location_col = "county", 
+               value_col = "mu")
+
+# NM_popcas %>% 
+#   select(count,year,population) %>% 
+#   mutate(ratio=count/population) %>% 
+#   ggplot(aes(x = ratio,y = count)) +
+#   geom_point()
+
+# #understant covariate expression used at regression
+# # y ~ a + b*x
+# # glm(y ~ I(x-x0)-1, offset=y0)
+# # the expression centers the coeficient
+# # thte additional +1 do not affect the coefficient estimate
+# # this is what we are modeling
+# NM_popcas %>%
+#   filter(year < baseline_last+1) %>% #as_tibble() %>%
+#   count(year) %>%
+#   # mutate(new=year-as_date(baseline_last) %m+% months(1))
+#   mutate(new=year-baseline_last+1) %>%
+#   avallecam::print_inf()
+
+# # MUST HAVE THE SAME NUMBER OF UNITS / DISTRICTS / UBIGEOS
+# counts %>% dim()
+# ebp_baselines %>% dim()
+# NM_geo %>% count()
+# zones
+
+# __ calculation ----------------------------------------------------------
+
+set.seed(1)
+poisson_result <- scan_eb_poisson(counts = counts, 
+                                  zones = zones, 
+                                  baselines = ebp_baselines,
+                                  n_mcsim = 999)
+# print(poisson_result)
+# poisson_result %>% str()
+# poisson_result %>% attributes()
+mlc_location <- poisson_result$MLC$locations
+#poisson_result$MLC$relative_risk
+# poisson_result$observed %>% as_tibble()
+# poisson_result$replicates %>% as_tibble()
+
+# __ results --------------------------------------------------------------
+
+counties <- as.character(NM_geo$county)
+# counties[mlc_location]
+
+# __ heuristic scores -----------------------------------------------------
+
+# NM_popcas %>% count(county)
+
+# Calculate scores and add column with county names
+county_scores <- score_locations(poisson_result, zones)
+county_scores %<>% mutate(county = factor(counties, 
+                                          levels = levels(NM_geo$county)))
+
+# Create a table for plotting
+score_map_df <- NM_map %>% 
+  full_join(county_scores)
+
+# __ top scoring ----------------------------------------------------------
+
+top5 <- top_clusters(poisson_result, 
+                     zones, 
+                     k = k_top_score_clusters, 
+                     overlapping = FALSE)
+
+# top5
+
+# Find the counties corresponding to the spatial zones of the 5 clusters.
+top5_counties <- top5$zone %>%
+  purrr::map(get_zone, zones = zones) %>%
+  purrr::map(function(x) counties[x])
+
+# Add the counties corresponding to the zones as a column
+top5 %<>% mutate(counties = top5_counties)
+
+top5_all <- top5 %>% as_tibble() %>% 
+  unnest(cols = counties) %>% #separate_rows()
+  left_join(
+    score_map_df %>% select(ubigeo,distrito,relative_score),
+    by = c("counties"="ubigeo")
+  ) %>% 
+  arrange(desc(score),desc(relative_score)) 
+
+# top5_all #%>% print_inf()
+
+# return()
+tibble(
+  counties = list(counties),
+  score_map_df = list(score_map_df),
+  test_department = list(test_department),
+  per4_centroid_filter = list(per4_centroid_filter),
+  poisson_result = list(poisson_result),
+  zones = list(zones),
+  k_top_score_clusters = list(k_top_score_clusters),
+  top5 = list(top5),
+  top5_all = list(top5_all)) %>% 
+  return()
+}
+
+
+```
+
+```{r}
+# strata_major_y <- "lima_metropolitana"
+```
+
+
+<!-- Nivel Distrital (1) -->
+
+Nivel Distrital
+===================================
+
+Column {.tabset}
+-------------------------------------
+
+<!-- ### Riesgo -->
+
+<!-- ```{r} -->
+
+<!-- renderPlotly({ -->
+
+<!--   strata_major_y <- input$strata_minor -->
+
+<!-- output_01 <- scanstat_01(var_name_depa = strata_major_y) -->
+
+<!-- # output_01$score_map_df %>% pluck(1) -->
+<!-- score_map_df <- output_01$score_map_df %>% pluck(1) -->
+<!-- test_department <- output_01$test_department %>% pluck(1) -->
+<!-- # per4_centroid_filter <- output_01$per4_centroid_filter %>% pluck(1) -->
+<!-- # poisson_result <- output_01$poisson_result %>% pluck(1) -->
+<!-- # zones <- output_01$zones %>% pluck(1) -->
+<!-- # k_top_score_clusters <- output_01$k_top_score_clusters %>% pluck(1) -->
+
+<!-- # __ outplot 01 ----------------------------------------------------- -->
+
+<!-- #score_map_df %>% as_tibble() -->
+
+<!-- gg1 <- score_map_df %>%  -->
+<!--   ggplot(aes(fill = relative_score),color = "grey") + -->
+<!--   geom_sf() + -->
+<!--   scale_fill_viridis_c(option = "magma") + -->
+<!--   ggsflabel::geom_sf_label_repel(aes(label = distrito_clean), -->
+<!--                                  alpha = 0.5, -->
+<!--                                  data = score_map_df %>%  -->
+<!--                                    filter(relative_score>0.5), -->
+<!--                                  size=3.5, -->
+<!--                                  # direction    = "y", -->
+<!--                                  # vjust        = 1, -->
+<!--                                  # hjust        = 0, -->
+<!--                                  force        = 0.5, -->
+<!--                                  # nudge_x      = -6.85, -->
+<!--                                  # nudge_y      = -.85, -->
+<!--                                  segment.size = 0.2 -->
+<!--                                  ) + -->
+<!--   labs(title = test_department,fill="Relative\nscore") + -->
+<!--   # annotation_scale(location = "bl", width_hint = 0.6) + -->
+<!--   # annotation_north_arrow(location = "bl", which_north = "true",  -->
+<!--   #                        pad_x = unit(0.25, "in"),  -->
+<!--   #                        pad_y = unit(0.5, "in"), -->
+<!--   #                        style = north_arrow_fancy_orienteering) + -->
+<!--   theme_void() -->
+
+<!-- plotly::ggplotly(gg1) -->
+
+<!-- }) -->
+<!-- ``` -->
+
+### Mapa de Riesgo
+
+```{r}
+
+renderLeaflet({
+  
+  strata_major_y <- input$strata_minor
+  
+  output_01 <- scanstat_01(var_name_depa = strata_major_y)
+  
+  # output_01$score_map_df %>% pluck(1)
+  score_map_df <- output_01$score_map_df %>% pluck(1)
+  test_department <- output_01$test_department %>% pluck(1)
+  # per4_centroid_filter <- output_01$per4_centroid_filter %>% pluck(1)
+  # poisson_result <- output_01$poisson_result %>% pluck(1)
+  # zones <- output_01$zones %>% pluck(1)
+  # k_top_score_clusters <- output_01$k_top_score_clusters %>% pluck(1)
+  
+  # __ outplot 01 -----------------------------------------------------
+  
+  
+  # output_01$k_top_score_clusters
+  
+  top5_all <- output_01$top5_all %>% pluck(1)
+  
+  # top5_all
+  
+  map <- score_map_df %>% 
+    left_join(top5_all %>% select(distrito,relrisk,MC_pvalue),
+              by = c("nm_dist"="distrito")) %>% 
+    left_join(malariadb_summary,
+              by = c("cd_dist"="ubigeo")) %>% 
+    mutate(RR=relative_score,
+           # year_last=,
+           # year_prev=,
+           county=nm_dist,
+           Y=relrisk,
+           E=MC_pvalue)
+  
+  pal <- colorNumeric(palette = "YlOrRd", domain = map$RR)
+  
+  labels <- sprintf("<strong> %s </strong> 
+                  <br/> Observed last month: %s 
+                  <br/> Previous months: %s 
+                  <br/> Relative Risk: %s 
+                  <br/> Relative Score: %s
+                  <br/> p-value: %s ",
+                  # <br/> Smokers proportion: %s 
+                  # <br/> SMR: %s 
+                  # (%s, %s)
+                  map$county, 
+                  map$year_last,
+                  map$year_prev,
+                  round(map$Y, 2),
+                  # map$Y,
+                  # map$smoking, 
+                  # round(map$SMR, 2),
+                  round(map$RR, 2),
+                  round(map$E, 3)#,  
+                  # round(map$LL, 2), 
+                  # round(map$UL, 2)
+  ) %>%
+    lapply(htmltools::HTML)
+  
+  mapout <- map %>% 
+    leaflet() %>% 
+    addTiles() %>%
+    addPolygons(color = "grey", 
+                weight = 1, 
+                fillColor = ~pal(RR),  
+                fillOpacity = 0.5,
+                highlightOptions = highlightOptions(weight = 4),
+                label = labels,
+                labelOptions = labelOptions(style = list("font-weight" = "normal", 
+                                                         padding = "3px 8px"),
+                                            textsize = "15px", 
+                                            direction = "auto")) %>%
+    addLegend(pal = pal, 
+              values = ~RR, 
+              opacity = 0.5, 
+              title = "Relative\nScore", 
+              position = "bottomright")
+  
+  mapout
+  
+})
+```
+
+
+### Casos Último Mes
+
+```{r}
+
+renderLeaflet({
+  
+  strata_major_y <- input$strata_minor
+  
+  output_01 <- scanstat_01(var_name_depa = strata_major_y)
+  
+  # output_01$score_map_df %>% pluck(1)
+  score_map_df <- output_01$score_map_df %>% pluck(1)
+  test_department <- output_01$test_department %>% pluck(1)
+  # per4_centroid_filter <- output_01$per4_centroid_filter %>% pluck(1)
+  # poisson_result <- output_01$poisson_result %>% pluck(1)
+  # zones <- output_01$zones %>% pluck(1)
+  # k_top_score_clusters <- output_01$k_top_score_clusters %>% pluck(1)
+  
+  # __ outplot 01 -----------------------------------------------------
+  
+  
+  # output_01$k_top_score_clusters
+  
+  top5_all <- output_01$top5_all %>% pluck(1)
+  
+  # top5_all
+  
+  map <- score_map_df %>% 
+    left_join(top5_all %>% select(distrito,relrisk,MC_pvalue),
+              by = c("nm_dist"="distrito")) %>% 
+    left_join(malariadb_summary,
+              by = c("cd_dist"="ubigeo")) %>% 
+    mutate(RR=relative_score,
+           # year_last=,
+           # year_prev=,
+           county=nm_dist,
+           Y=relrisk,
+           E=MC_pvalue)
+  
+  pal <- colorNumeric(palette = "YlOrRd", domain = map$year_last)
+  
+  labels <- sprintf("<strong> %s </strong> 
+                  <br/> Observed last month: %s 
+                  <br/> Previous months: %s 
+                  <br/> Relative Risk: %s 
+                  <br/> Relative Score: %s
+                  <br/> p-value: %s ",
+                  # <br/> Smokers proportion: %s 
+                  # <br/> SMR: %s 
+                  # (%s, %s)
+                  map$county, 
+                  map$year_last,
+                  map$year_prev,
+                  round(map$Y, 2),
+                  # map$Y,
+                  # map$smoking, 
+                  # round(map$SMR, 2),
+                  round(map$RR, 2),
+                  round(map$E, 3)#,  
+                  # round(map$LL, 2), 
+                  # round(map$UL, 2)
+  ) %>%
+    lapply(htmltools::HTML)
+  
+  mapout <- map %>% 
+    leaflet() %>% 
+    addTiles() %>%
+    addPolygons(color = "grey", 
+                weight = 1, 
+                fillColor = ~pal(year_last),  
+                fillOpacity = 0.5,
+                highlightOptions = highlightOptions(weight = 4),
+                label = labels,
+                labelOptions = labelOptions(style = list("font-weight" = "normal", 
+                                                         padding = "3px 8px"),
+                                            textsize = "15px", 
+                                            direction = "auto")) %>%
+    addLegend(pal = pal, 
+              values = ~year_last, 
+              opacity = 0.5, 
+              title = "Previous\nMonth", 
+              position = "bottomright")
+  
+  mapout
+  
+})
+```
+
+
+
+<!-- ### Referencia -->
+
+<!-- ```{r} -->
+
+<!-- renderPlot({ -->
+
+<!--   strata_major_y <- input$strata_minor -->
+
+<!-- output_01 <- scanstat_01(var_name_depa = strata_major_y) -->
+
+<!-- # output_01$score_map_df %>% pluck(1) -->
+<!-- # score_map_df <- output_01$score_map_df %>% pluck(1) -->
+<!-- test_department <- output_01$test_department %>% pluck(1) -->
+<!-- per4_centroid_filter <- output_01$per4_centroid_filter %>% pluck(1) -->
+<!-- # poisson_result <- output_01$poisson_result %>% pluck(1) -->
+<!-- # zones <- output_01$zones %>% pluck(1) -->
+<!-- # k_top_score_clusters <- output_01$k_top_score_clusters %>% pluck(1) -->
+
+
+<!-- # __ outplot 02 ----------------------------------------------------- -->
+
+<!-- gg2 <- ggplot() + -->
+<!--   geom_sf(data = per4 %>% filter(departamento==test_department)) + -->
+<!--   geom_sf(data = per4_centroid_filter) + -->
+<!--   ggrepel::geom_text_repel(data = per4_centroid_filter %>%  -->
+<!--                              avallecam::st_coordinates_tidy() %>%  -->
+<!--                              as_tibble() %>%  -->
+<!--                              select(county=ubigeo, -->
+<!--                                     seat=cap_dist, -->
+<!--                                     seat_long=X, -->
+<!--                                     seat_lat=Y) %>%  -->
+<!--                              mutate(seat=janitor::make_clean_names(seat)), -->
+<!--                            aes(x = seat_long, -->
+<!--                                y = seat_lat, -->
+<!--                                label=seat), -->
+<!--                            size=3.5, -->
+<!--                            # direction    = "y", -->
+<!--                             vjust        = 1, -->
+<!--                             hjust        = 0, -->
+<!--                             force        = 0.5, -->
+<!--                             # nudge_x      = -.85, -->
+<!--                             # # nudge_y      = -.85, -->
+<!--                             segment.size = 0.2, -->
+<!--                             show.legend = F) -->
+
+<!-- gg2 -->
+
+<!-- # plotly::ggplotly(gg2) -->
+
+<!-- }) -->
+<!-- ``` -->
+
+<!-- Nivel Distrital (2) -->
+<!-- =================================== -->
+
+<!-- Column {.tabset} -->
+<!-- ------------------------------------- -->
+
+<!-- ### Tabla 01 -->
+
+<!-- ```{r} -->
+
+<!-- DT::renderDT({ -->
+
+<!--   strata_major_y <- input$strata_minor -->
+
+<!-- output_01 <- scanstat_01(var_name_depa = strata_major_y) -->
+
+<!-- # output_01$score_map_df %>% pluck(1) -->
+<!-- top5 <- output_01$top5 %>% pluck(1) -->
+
+<!-- top5 %>%  -->
+<!--     cdcper::cdc_datatable_html() -->
+
+<!-- }) -->
+
+<!-- ``` -->
+
+### Tabla 01
+
+```{r}
+
+DT::renderDT({
+  
+  strata_major_y <- input$strata_minor
+
+output_01 <- scanstat_01(var_name_depa = strata_major_y)
+
+# output_01$score_map_df %>% pluck(1)
+top5_all <- output_01$top5_all %>% pluck(1)
+
+top5_all %>% 
+  left_join(malariadb_summary,
+              by = c("counties"="ubigeo")) %>% 
+  # select(-zone,-duration,-score,-Gumpel_pvalue,-geometry) %>% 
+  select("Ubigeo"=counties,
+         "Distrito"=distrito,
+         "Previous Months"=year_prev,
+         "Last Month"=year_last,
+         "Relative Risk"=relrisk,
+         "p-value"=MC_pvalue,
+         "Relative Score"=relative_score) %>% 
+    cdcper::cdc_datatable_html()
+  
+})
+
+```
+
+
+
+Acerca
+===================================
+
+### Expectation-based Scan Statistic para estimar el riesgo relativo suavizado en el espacio a nivel distrital por departamento
+
+#### Fuente de Información
+
+Empleamos la base de datos de casos notificados diarios de malaria. Esta base proviene del sistema de notificación de casos por el aplicativo NotiSp del Centro Nacional de Epidemiología (CDC). 
+
+#### Método de Detección de Áreas Calientes
+
+Los métodos de Scan statistics permiten poner a prueba la hipótesis nula de homogeneidad espacial de eventos. El método expectation-based Poisson scan statistic (Neill, 2005) usa el conteo de casos pasados no-anómalos como comparador contra el conteo dentro de áreas calientes (clusters) en un rango de tiempo de evaluación. En contraste, el population-based space-time scan statistic (Kulldorff, 2001) compara el conteo de casos en un cluster contra los que están afuera en el periodo de interés, condicionado a la cantidad total de casos observados. 
+
+El método emplea un Poisson scan statistic para datos de tipo conteo por distrito dentro de cada departamento. Primero, identificamos y extraemos el rango de tiempo de evaluación de comparación. Segundo, definimos la zona espacial, la cual consiste de un conjunto de unidades espaciales (e.g., distritos) vecinas, según un número preestablecido de unidades (k=15). Tercero, empleamos los centroides de cada distrito para calcular la similaridad entre unidades espaciales empleando una matriz de distancia euclidiana con la función sp::spDists tomando en cuenta la curvatura del planeta. Cuarto, estimamos una línea base con un modelo de regresión GLM y realizar una interpolación simple que predice los casos esperados por distrito a lo largo del tiempo. Estas tres fuentes de información se aplica el Poisson scan statistic, empleando 999 simulaciones de Monte Carlo para generar una hipótesis nula y calcular el estadístico de prueba.
+
+#### Software
+
+Empleamos el software de programación estadística R para la limpieza, manejo y ejecución de las estimaciones. Aplicamos el paquete en R `scanstatistics` (Allévius B, 2018). Aquí obtenemos riesgos relativos (epidemiológicamente interpretables, con 1 como valor neutro) y scores relativos (dentro de una escala de 0 a 1) para visualizar la agregación espacial en heatmaps. 
+
+Empleamos el paquete en R “flexdashboard” para la construcción del tablero de mando o “dashboard”. Aquí empleamos la opción shiny para que el tablero tenga capacidad de reaccionar a diferentes inputs (Departamentos). 
+
+Empleamos el paquete en R [leaflet](https://rstudio.github.io/leaflet/) para generar
+el mapa interactivo.
+
+#### Referencias
+
+1. Neill, D. B., Moore, A. W., Sabhnani, M., Daniel, K. (2005): Detection of Emerging Space-Time Clusters, In Proceedings of the Eleventh ACM SIGKDD International Conference on Knowledge Discovery in Data Mining, 218–27. ACM.
+
+2. Allévius B (2018). scanstatistics: space-time anomaly detection using scan statistics. Journal of Open Source Software, 3(25), 515. doi: 10.21105/joss.00515 (URL: https://doi.org/10.21105/joss.00515; https://github.com/BenjaK/scanstatistics). 
+
+3. Kulldorff, M. (2001), Prospective time periodic geographical disease surveillance using a scan statistic, Journal of the Royal Statistical Society, Series A (Statistics in Society), 164, 61–72.
+
+#### Equipo
+
+**Información:** Noti / CDC MINSA
+
+**Análisis:** CDC MINSA
+
+

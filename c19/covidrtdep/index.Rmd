@@ -1,0 +1,378 @@
+---
+title: "CDC Perú: Transmisión de COVID-19"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: cerulean
+    orientation: columns
+    vertical_layout: fill
+    social: menu
+    source_code: embed
+runtime: shiny
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(shinyWidgets)
+library(plotly)
+library(sf)
+theme_set(theme_bw())
+
+library(incidenceflow)
+```
+
+```{r}
+# rute <- "data/rt_files/10-inc_rt_adm01.rds"
+# # file.info(rute)
+# # library(lubridate)
+# date_input <- lubridate::date(file.info(rute)$mtime)
+source("../run_shell.R")
+```
+
+```{r}
+# nivel adm03
+ubigeo_diccionario <- 
+  read_rds("data-raw/per4-shp_distritos_janitor.rds") %>% 
+  as.data.frame() %>%
+  select(starts_with("cd_"),starts_with("nm_"),-ends_with("_t")) %>% 
+  mutate(nm_depa=if_else(nm_prov=="lima","lima_metropolitana",nm_depa)) %>% 
+  as_tibble()
+
+ubigeo_geometria <- 
+  read_rds("data-raw/per4-shp_distritos_janitor.rds") %>% 
+  mutate(nm_depa=if_else(nm_prov=="lima","lima_metropolitana",nm_depa)) %>% 
+  select(nm_depa,nm_dist,cd_dist,geometry) %>% 
+  # preidentify stratification variables
+  rename(strata_major=nm_depa,
+         strata_minor=nm_dist,
+         strata_minor_code=cd_dist)
+```
+
+INPUT {.sidebar}
+===================================
+
+Inputs {data-width=300}
+-----------------------------------------------------------------------
+
+__Actualización: `r date_input`__
+
+```{r}
+pickerInput('strata_minor','Departamento', sort(unique(ubigeo_diccionario$nm_depa)),
+            options = list(`actions-box` = TRUE),
+            multiple = F, 
+            selected = c("amazonas")
+            # multiple = T, 
+            # selected = c("amazonas","ica","ayacucho","callao")
+            )
+```
+
+<!-- a -->
+
+Nivel Distrital (1)
+===================================
+
+```{r}
+# solo departamento
+adm03 <- read_rds("data/rt_files/10-inc_rt_adm03.rds")
+strata_major_y <- "amazonas"
+```
+
+```{r,eval=FALSE}
+adm03_one <- adm03 %>% filter(strata_major==strata_major_y)
+ubi03_one <- ubigeo_geometria %>% filter(strata_major==strata_major_y)
+
+adm03_one %>% 
+  # resumen
+  mutate(sumx=map(
+    .x = tsibble_day,
+    .f = summarise,
+    n_pos_clean=sum(n))) %>% 
+  unnest(sumx) %>% 
+  select(1:3,n_pos_clean,everything()) %>% 
+  arrange(desc(n_pos_clean)) %>% 
+  pull(strata_minor)
+```
+
+Column {.tabset}
+-------------------------------------
+
+### RT: Mapa
+
+
+```{r}
+# departamento-distrito - map
+
+renderPlotly({
+  
+  strata_major_y <- input$strata_minor
+  
+  adm03_one <- adm03 %>% filter(strata_major==strata_major_y)
+  ubi03_one <- ubigeo_geometria %>% filter(strata_major==strata_major_y)
+  
+  g4 <- nested_figure_04(
+    data = adm03_one,
+    geometry = ubi03_one,
+    strata_major = strata_major,
+    strata_minor = strata_minor)
+  
+  plotly::ggplotly(g4)
+  
+})
+
+```
+
+
+Column {.tabset}
+-------------------------------------
+
+### Rt: Actual
+
+```{r}
+# departamento-distrito - dot
+
+renderPlotly({
+  
+  strata_major_y <- input$strata_minor
+  
+  adm03_one <- adm03 %>% filter(strata_major==strata_major_y)
+  # ubi03_one <- ubigeo_geometria %>% filter(strata_major==strata_major_y)
+  
+  g5 <- adm03_one %>% 
+    # filtrar por area
+    filter(strata_major == strata_major_y) %>% 
+    # resumen
+    mutate(sumx=map(
+      .x = tsibble_day,
+      .f = summarise,
+      n_pos_clean=sum(n))) %>% 
+    unnest(sumx) %>% 
+    # extraer columna
+    select(1:3,n_pos_clean,current_rt) %>% 
+    # unnest(cols = c(current_rt)) %>% 
+    nested_figure_03(strata_major = strata_major,
+                     strata_minor = strata_minor,
+                     strata_minor_code = strata_minor_code,
+                     time_delay_days = 7)
+  plotly::ggplotly(g5)
+  
+})
+```
+
+
+Nivel Distrital (2)
+===================================
+
+
+Column {.tabset}
+-------------------------------------
+
+### Incidencia
+
+```{r}
+# departamento-distrito - incid
+
+
+renderPlotly({
+  
+  strata_major_y <- input$strata_minor
+  
+  adm03_one <- adm03 %>% filter(strata_major==strata_major_y)
+  
+  g10 <- adm03_one %>% 
+    # filtrar por area
+    filter(strata_major == strata_major_y) %>% 
+    # filter(strata_minor == strata_minor_x) %>% 
+    # resumen
+    mutate(sumx=map(
+      .x = tsibble_day,
+      .f = summarise,
+      n_pos_clean=sum(n))) %>% 
+    unnest(sumx) %>% 
+    # select(1:3,n_pos_clean,everything()) %>% 
+    arrange(desc(n_pos_clean)) %>% 
+    mutate(strata_minor=fct_inorder(strata_minor)) %>% 
+    # extraer solo una columna
+    select(1:3,data=tsibble_wik) %>% 
+    # unnest(data)
+    # nested_figure_01(strata = strata_minor)
+    # mutate(strata_minor_x={{strata}}) %>%
+    mutate(strata_minor_x=strata_minor) %>%
+    select(strata_minor_x,data) %>%
+    unnest(cols = c(data)) %>%
+    # ggplot(aes(x = date_incidence_case)) +
+    # geom_histogram(binwidth = 1) +
+    ggplot(aes(x = date_incidence_case,y = n)) +
+    geom_col() +
+    # scale_x_date(date_breaks = "7 days",date_labels = "%b-%d") +
+    facet_wrap(~strata_minor_x) +
+    # facet_wrap(~strata_minor_x,scales = "free_y") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    labs(title = str_c("Incidencia: ",strata_major_y),y = "Número de casos")
+  # g10
+  plotly::ggplotly(g10)
+  
+})
+
+```
+
+
+<!-- ```{r} -->
+<!-- # departamento-distrito - incid -->
+<!-- g9 <- adm03_one %>%  -->
+<!--   # filtrar por area -->
+<!--   filter(strata_major == strata_major_y) %>%  -->
+<!--   # filter(strata_minor == strata_minor_x) %>%  -->
+<!--   # extraer solo una columna -->
+<!--   select(1:3,data=tsibble_wik) %>%  -->
+<!--   # unnest(data) -->
+<!--   # nested_figure_01(strata = strata_minor) -->
+<!--   # mutate(strata_minor_x={{strata}}) %>% -->
+<!--   mutate(strata_minor_x=strata_minor) %>% -->
+<!--   select(strata_minor_x,data) %>% -->
+<!--   unnest(cols = c(data)) %>% -->
+<!--   # ggplot(aes(x = date_incidence_case)) + -->
+<!--   # geom_histogram(binwidth = 1) + -->
+<!--   ggplot(aes(x = date_incidence_case,y = n)) + -->
+<!--   geom_col() + -->
+<!--   # scale_x_date(date_breaks = "7 days",date_labels = "%b-%d") + -->
+<!--   # facet_wrap(~strata_minor_x) + -->
+<!--   facet_wrap(~strata_minor_x,scales = "free_y") + -->
+<!--   theme(axis.text.x = element_text(angle = 90, hjust = 1)) + -->
+<!--   labs(title = str_c("Incidencia: ",strata_major_y),y = "Número de casos") -->
+<!-- # g9 -->
+<!-- plotly::ggplotly(g9) -->
+<!-- ``` -->
+
+
+<!-- Column {.tabset} -->
+<!-- ------------------------------------- -->
+
+### Rt en Tiempo
+
+```{r}
+# departamento-distrito - rt
+
+
+renderPlotly({
+  
+  strata_major_y <- input$strata_minor
+  
+  adm03_one <- adm03 %>% filter(strata_major==strata_major_y)
+  
+  g6 <- adm03_one %>% 
+    # filtrar por area
+    filter(strata_major == strata_major_y) %>% 
+    # filter(strata_minor == strata_minor_x) %>% 
+    # resumen
+    mutate(sumx=map(
+      .x = tsibble_day,
+      .f = summarise,
+      n_pos_clean=sum(n))) %>% 
+    unnest(sumx) %>% 
+    # select(1:3,n_pos_clean,everything()) %>% 
+    arrange(desc(n_pos_clean)) %>% 
+    mutate(strata_minor=fct_inorder(strata_minor)) %>% 
+    # extraer solo una columna
+    select(1:3,tsibble_rt) %>% 
+    # unnest(cols = c(tsibble_rt)) %>% 
+    nested_figure_02(strata = strata_minor,
+                     date_lastone = Sys.Date(),
+                     limit_figure = 90) +
+    facet_wrap(~strata_minor_x)
+  
+  # g6
+  plotly::ggplotly(g6)
+  
+})
+
+```
+
+<!-- a -->
+
+Nivel Distrital (3)
+===================================
+
+### Table
+
+```{r}
+# departamento-distrito - tabla
+
+DT::renderDT({
+  
+  
+  strata_major_y <- input$strata_minor
+  
+  adm03_one <- adm03 %>% filter(strata_major==strata_major_y)
+  
+  adm03_one %>% 
+    # filtrar por area
+    filter(strata_major == strata_major_y) %>% 
+    # extraer columna
+    select(1:2,last5wk_rt) %>% 
+    unnest(cols = c(last5wk_rt)) %>% 
+    cdcper::cdc_datatable_html()
+  
+})
+
+```
+
+Acerca
+===================================
+
+### Variación Temporal de la Transmisibilidad de Covid-19 en Perú a Nivel Nacional y Regional
+
+#### Material y Métodos
+
+Empleamos la base de datos de casos notificados diarios. Esta base es resultado 
+de la unificación y limpieza de tres bases: 
+(i) la base de pruebas serológicas o rápidas colectada por el aplicativo 
+SISCOVID del Ministerio de Salud (Minsa), 
+(ii) pruebas moleculares o reacción en cadena de polimerasas (PCR) colectada por 
+el aplicativo NetLab del Instituto Nacional de Salud (INS) y 
+(iii) notificación de casos por el aplicativo NotiSp del Centro Nacional de 
+Epidemiología (CDC). 
+<!-- Las variables de ubicación geográfica y fecha de inicio de síntomas fueron  -->
+<!-- unificadas priorizando las fuentes de información con mayor control de calidad  -->
+<!-- y validación por persona. -->
+
+Conservamos los casos sin antecedentes de viaje o contacto (por transmisión local) 
+y sintomáticos. Calculamos una serie de tiempo de casos incidentes por día según 
+el autoreporte de inicio de síntomas. En las observaciones con valor perdido en 
+la fecha de inicio de síntomas, ejecutamos una imputación según la mediana de 
+días de retraso entre la fecha de inicio de síntomas y fecha de confirmación del 
+caso, estratificada por departamento.
+
+Para la estimación de la variación temporal del número reproductivo efectivo (Rt) 
+usamos el paquete estadístico EpiEstim (1). El método de estimación del Rt a partir 
+de la curva de casos incidentes y la distribución del intervalo serial está detallado 
+en Cori et al. 2013 (2) basado en Wallinga et al. 2004 (3). En breve, el Rt está 
+definido como la razón entre el número de nuevos casos infectados locales en el 
+tiempo t y el total de las posibles infecciones por todos los individuos infectados 
+en el tiempo t. Con esto, la incidencia de casos en el tiempo t, en promedio, 
+está definida por $E[I_t]=R_t∑_{t , s=1}I_{t-s}w_s$ , donde $E[X]$ denota el 
+valor esperado aleatorio de $X$ , $s$ es el tiempo de ventana de 
+estimación, $I_{t-s}$ la incidencia observada en el tiempo $t-s$ , y $w_s$ la 
+infectividad por individuo dependiente de la distribución del intervalo serial 
+o tiempo entre la infección del caso infector y el caso infectado. Mediante 
+inferencia bayesiana, se estima el Rt como un promedio de la distribución 
+posterior e intervalos de credibilidad al 95%. Aquí empleamos una ventana de 
+estimación de 7 días, asumimos un intervalo serial paramétrico de 3.96 ± 4.75 días (4) 
+y un número reproductivo básico constante durante el tiempo de la ventana de estimación.
+
+Empleamos el software de programación estadística R para la limpieza, manejo y 
+ejecución de las estimaciones.
+
+#### Referencias
+
+1. Anne Cori (2019). EpiEstim: Estimate Time Varying Reproduction Numbers from Epidemic Curves. R package version 2.2-1. https://CRAN.R-project.org/package=EpiEstim
+2. Cori, A., Ferguson, N. M., Fraser, C., & Cauchemez, S. (2013). A new framework and software to estimate time-varying reproduction numbers during epidemics. American journal of epidemiology, 178(9), 1505-1512. https://academic.oup.com/aje/article/178/9/1505/89262
+3. Wallinga, J., & Teunis, P. (2004). Different epidemic curves for severe acute respiratory syndrome reveal similar impacts of control measures. American Journal of epidemiology, 160(6), 509-516. https://academic.oup.com/aje/article/160/6/509/79472
+4. Du, Z., Xu, X., Wu, Y., Wang, L., Cowling, B. J., & Meyers, L. (2020). Serial Interval of COVID-19 among Publicly Reported Confirmed Cases. Emerging Infectious Diseases, 26(6), 1341-1343. https://dx.doi.org/10.3201/eid2606.200357.
+
+#### Equipo
+
+**Información:** Noti / CDC MINSA - Reporte de Pruebas rapidas, SIS-COVID/ OGTI - reporte Netlab Pruebas moleculares / INS.
+
+**Análisis:** CDC MINSA

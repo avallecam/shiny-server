@@ -1,0 +1,433 @@
+---
+title: "CDC Perú: Detección de Aberraciones para COVID-19"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: cerulean
+    orientation: columns
+    vertical_layout: fill
+    social: menu
+    source_code: embed
+runtime: shiny
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+# paquetes
+library(flexdashboard)
+library(tidyverse)
+library(shinyWidgets)
+library(plotly)
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(magrittr)
+library(tsibble)
+library(surveillance)
+theme_set(theme_bw())
+```
+
+```{r}
+# parámetro
+
+baseline <- 3
+```
+
+```{r}
+# rute <- "data/rt_files/10-inc_rt_adm01.rds"
+# # file.info(rute)
+# # library(lubridate)
+# date_input <- lubridate::date(file.info(rute)$mtime)
+source("../run_shell.R")
+```
+
+```{r}
+# nivel adm01
+ubigeo_diccionario_per2 <-
+  read_rds("data-raw/per4-shp_distritos_janitor.rds") %>%
+  as.data.frame() %>%
+  select(starts_with("cd_"),starts_with("nm_"),-ends_with("_t")) %>%
+  mutate(nm_depa=if_else(nm_prov=="lima","lima_metropolitana",nm_depa)) %>%
+  count(cd_depa,nm_depa) %>%
+  mutate(nm_pais="peru") %>% #avallecam::print_inf()
+  as_tibble()
+
+# rute <- ""
+# ubigeo_geometria_per2 <-
+#   sf::st_read(paste0(rute,"data-raw/shp/PER_adm1_avc.shp"),quiet=TRUE) %>%
+#   mutate(nm_depa=janitor::make_clean_names(nm_depa)) %>%
+#   mutate(nm_depa=if_else(nm_depa=="lima_provincia","lima",nm_depa)) %>%
+#   mutate(nm_pais="peru") %>%
+#   # preidentify stratification variables
+#   rename(strata_major=nm_pais,
+#          strata_minor=nm_depa)
+```
+
+INPUT {.sidebar}
+===================================
+
+Inputs {data-width=300}
+-----------------------------------------------------------------------
+
+__Actualización: `r date_input`__
+
+<!-- a -->
+
+Nivel Departamental
+===================================
+
+```{r}
+adm01 <- read_rds("data/rt_files/10-inc_rt_adm01.rds")
+strata_major_x <- "peru"
+```
+
+
+Column {.tabset}
+-------------------------------------
+
+### EARS-C1
+
+```{r}
+
+# renderPlotly({
+
+
+g1 <- adm01 %>% 
+  # filtrar por area
+  filter(strata_major == strata_major_x) %>% 
+  
+  # resumen
+    mutate(sumx=map(
+      .x = tsibble_day,
+      .f = summarise,
+      n_pos_clean=sum(n))) %>% 
+    unnest(sumx) %>% 
+    # select(1:3,n_pos_clean,everything()) %>% 
+    arrange(desc(n_pos_clean)) %>% 
+    mutate(strata_minor=fct_inorder(strata_minor)) %>% 
+  
+  # filter(strata_minor == strata_minor_x) %>%
+  # filter(strata_minor == input$strata_minor) %>% 
+  # extraer solo una columna
+  select(strata_major,strata_minor,tsibble_wik) %>% 
+  unnest(cols = tsibble_wik) %>% 
+  mutate(year = lubridate::year(date_incidence_case),
+         epiweek = lubridate::epiweek(date_incidence_case)) %>% 
+  # adapt to workflow
+  # rename(var_admx=strata_minor) %>% 
+  rename(var_year=year, 
+         var_time=epiweek, 
+         var_event_count = n) %>% 
+  # step 2
+  filter(!is.na(var_year)) %>% 
+  filter(!is.na(strata_major)) %>% 
+  filter(!is.na(strata_minor)) %>% 
+  #expand dataframe for weeks witout reports
+  complete(strata_major,
+           strata_minor,
+           var_time = full_seq(var_time,1),
+           var_year = full_seq(var_year,1),
+           fill = list(var_event_count=0)) %>% 
+  
+  group_by(strata_major,strata_minor,var_year,var_time) %>% 
+  summarise(var_event_count=sum(var_event_count,na.rm = T)) %>% 
+  ungroup() %>% 
+  filter(var_time!=53) %>% 
+  mutate(anhosemana=yearweek(str_c(var_year," Week ",var_time))) 
+
+# g1
+
+sts_01 <- function(detectar_sts,data) {
+  detectar_sts %>% 
+    as_tibble() %>% 
+    mutate(time = data$anhosemana[(baseline + 1):(nrow(data))]) %>% 
+    left_join(data,by = c("time"="anhosemana")) 
+}
+
+g2 <- g1 %>% 
+  group_by(strata_minor) %>% 
+  nest() %>% 
+  ungroup() %>% 
+  mutate(seteo_sts=map(.x = data,
+                        .f = ~sts(observed = .$var_event_count,
+                                  epoch = as.numeric(.$anhosemana),
+                                  start = c(2011,1),
+                                  frequency = 52),
+  )) %>% 
+  #slice(1:2) %>% pull(seteo_sts)
+  
+  mutate(detectar_sts=map(.x = seteo_sts,
+                          .f = ~earsC(sts = .x,
+                                      control = list(baseline = baseline)))) %>% 
+  #slice(1:2) %>% pull(detectar_sts)
+  # mutate(tibble_sts=map(detectar_sts,as_tibble)) %>% 
+  # slice(1:2) %>% pull(tibble_sts)
+
+  mutate(limpiar_sts=map2(detectar_sts,data,sts_01)) %>% 
+  #slice(1:2) %>% pull(limpiar_sts)
+
+  unnest(cols = c(limpiar_sts)) %>% 
+  
+  # new date vars
+  cdcper::cdc_yearweek_to_date(year_integer = var_year,
+                               week_integer = var_time)
+
+# g2 %>% glimpse()
+
+g3 <- g2 %>% 
+  # glimpse()
+  # select(-data,-seteo_sts,-detectar_sts) %>% 
+  
+  #grafico
+  # filter(!(year==2019 & semana>41)) %>% 
+  ggplot(aes(x = epi_date,y = var_event_count)) +
+  geom_bar(aes(fill=alarm),stat = "identity") +
+  geom_step(aes(epi_date, upperbound)) +
+  geom_point(data = filter(g2,alarm), 
+             aes(x = epi_date), y = 0, color = "red") +
+  scale_x_date(date_breaks = "7 day",date_labels = "%b-%d") +
+  # scale_x_date(date_breaks="2 week", date_labels = "%Y-%U") +
+  scale_fill_viridis_d(direction = -1) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~strata_minor) +
+  labs(#title = "EARS C1: Serie de tiempo semanal",
+       # x="Time (Year - CDC epiweek)",   
+       x="",
+       y="Casos por semana")
+
+plotly::ggplotly(g3)
+  
+  
+# })
+
+
+```
+
+
+<!-- a -->
+
+
+Nivel Distrital
+===================================
+
+```{r}
+pickerInput('strata_minor','Departamento', 
+            sort(unique(ubigeo_diccionario_per2$nm_depa)),
+            options = list(`actions-box` = TRUE),
+            multiple = F, 
+            selected = c("amazonas")
+            # multiple = T, 
+            # selected = c("amazonas","ica","ayacucho","callao")
+            )
+```
+
+```{r}
+# solo departamento
+adm03 <- read_rds("data/rt_files/10-inc_rt_adm03.rds")
+# strata_major_y <- "amazonas"
+```
+
+Column {.tabset}
+-------------------------------------
+
+### EARS-C1
+
+```{r}
+
+renderPlotly({
+
+  strata_major_y <- input$strata_minor
+
+g1 <- adm03 %>% 
+  # filtrar por area
+  filter(strata_major == strata_major_y) %>% 
+  
+  # resumen
+    mutate(sumx=map(
+      .x = tsibble_day,
+      .f = summarise,
+      n_pos_clean=sum(n))) %>% 
+    unnest(sumx) %>% 
+    # select(1:3,n_pos_clean,everything()) %>% 
+    arrange(desc(n_pos_clean)) %>% 
+    mutate(strata_minor=fct_inorder(strata_minor)) %>% 
+  
+  # filter(strata_minor == strata_minor_x) %>%
+  # filter(strata_minor == input$strata_minor) %>% 
+  # extraer solo una columna
+  select(strata_major,strata_minor,tsibble_wik) %>% 
+  unnest(cols = tsibble_wik) %>% 
+  mutate(year = lubridate::year(date_incidence_case),
+         epiweek = lubridate::epiweek(date_incidence_case)) %>% 
+  # adapt to workflow
+  # rename(var_admx=strata_minor) %>% 
+  rename(var_year=year, 
+         var_time=epiweek, 
+         var_event_count = n) %>% 
+  # step 2
+  filter(!is.na(var_year)) %>% 
+  filter(!is.na(strata_major)) %>% 
+  filter(!is.na(strata_minor)) %>% 
+  #expand dataframe for weeks witout reports
+  complete(strata_major,
+           strata_minor,
+           var_time = full_seq(var_time,1),
+           var_year = full_seq(var_year,1),
+           fill = list(var_event_count=0)) %>% 
+  
+  group_by(strata_major,strata_minor,var_year,var_time) %>% 
+  summarise(var_event_count=sum(var_event_count,na.rm = T)) %>% 
+  ungroup() %>% 
+  filter(var_time!=53) %>% 
+  mutate(anhosemana=yearweek(str_c(var_year," Week ",var_time))) 
+
+# g1
+
+sts_01 <- function(detectar_sts,data) {
+  detectar_sts %>% 
+    as_tibble() %>% 
+    mutate(time = data$anhosemana[(baseline + 1):(nrow(data))]) %>% 
+    left_join(data,by = c("time"="anhosemana")) 
+}
+
+g2 <- g1 %>% 
+  group_by(strata_minor) %>% 
+  nest() %>% 
+  ungroup() %>% 
+  mutate(seteo_sts=map(.x = data,
+                        .f = ~sts(observed = .$var_event_count,
+                                  epoch = as.numeric(.$anhosemana),
+                                  start = c(2011,1),
+                                  frequency = 52),
+  )) %>% 
+  #slice(1:2) %>% pull(seteo_sts)
+  
+  mutate(detectar_sts=map(.x = seteo_sts,
+                          .f = ~earsC(sts = .x,
+                                      control = list(baseline = baseline)))) %>% 
+  #slice(1:2) %>% pull(detectar_sts)
+  # mutate(tibble_sts=map(detectar_sts,as_tibble)) %>% 
+  # slice(1:2) %>% pull(tibble_sts)
+
+  mutate(limpiar_sts=map2(detectar_sts,data,sts_01)) %>% 
+  #slice(1:2) %>% pull(limpiar_sts)
+
+  unnest(cols = c(limpiar_sts)) %>% 
+  
+  # new date vars
+  cdcper::cdc_yearweek_to_date(year_integer = var_year,
+                               week_integer = var_time)
+
+# g2 %>% glimpse()
+
+g3 <- g2 %>% 
+  cdcper::cdc_yearweek_to_date(year_integer = var_year,
+                               week_integer = var_time) %>% 
+  # glimpse()
+  # select(-data,-seteo_sts,-detectar_sts) %>% 
+  
+  #grafico
+  # filter(!(year==2019 & semana>41)) %>% 
+  ggplot(aes(x = epi_date,y = var_event_count)) +
+  geom_bar(aes(fill=alarm),stat = "identity") +
+  geom_step(aes(epi_date, upperbound)) +
+  geom_point(data = filter(g2,alarm), 
+             aes(x = epi_date), y = 0, color = "red") +
+  scale_x_date(date_breaks = "7 day",date_labels = "%b-%d") +
+  # scale_x_date(date_breaks="2 week", date_labels = "%Y-%U") +
+  scale_fill_viridis_d(direction = -1) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~strata_minor) +
+  labs(#title = "EARS C1: Serie de tiempo semanal",
+       # x="Time (Year - CDC epiweek)",   
+       x="",
+       y="Casos por semana")
+
+plotly::ggplotly(g3)
+  
+  
+})
+
+
+```
+
+
+Acerca
+===================================
+
+### Early Aberration Reporting System
+
+#### Material y Métodos
+
+Empleamos la base de datos de casos notificados diarios. Esta base es resultado 
+de la unificación y limpieza de tres bases: 
+(i) la base de pruebas serológicas o rápidas colectada por el aplicativo 
+SISCOVID del Ministerio de Salud (Minsa), 
+(ii) pruebas moleculares o reacción en cadena de polimerasas (PCR) colectada por 
+el aplicativo NetLab del Instituto Nacional de Salud (INS) y 
+(iii) notificación de casos por el aplicativo NotiSp del Centro Nacional de 
+Epidemiología (CDC). 
+<!-- Las variables de ubicación geográfica y fecha de inicio de síntomas fueron  -->
+<!-- unificadas priorizando las fuentes de información con mayor control de calidad  -->
+<!-- y validación por persona. -->
+Conservamos los casos sin antecedentes de viaje o contacto (por transmisión local) 
+y sintomáticos. 
+
+El método EARS-C1 toma un rango de valores de la serie temporale de vigilancia. 
+Para cada punto temporal calcula un umbral basado en valores del pasado reciente. 
+Luego lo compara con el número de recuentos observados. 
+Si la observación está por encima de un cuantil específico del intervalo 
+de predicción, entonces se dispara una alarma. 
+Este método es especialmente útil para los datos sin muchos valores históricos, 
+ya que sólo necesita recuentos del pasado reciente. 
+
+En el caso del método C1, la línea de base son las últimas 3 semanas antes del 
+punto de tiempo evaluado t. El valor esperado es la media de la línea de base. 
+Se calcula un intervalo de predicción aproximado (two-sided) (1-α)\cdot 
+100\% basado en el supuesto de que la diferencia entre el valor esperado y 
+el valor observado dividido por la derivación estándar de los recuentos en 
+la ventana deslizante, llamada $C_1(t)$, 
+sigue una distribución normal estándar en ausencia de brotes:
+
+$$C_1(t)= \frac{Y(t)-\bar{Y}_1(t)}{S_1(t)}$$,
+
+donde
+
+$$\bar{Y}_1(t)= \frac{1}{{baseline}} ∑_{i=t-1}^{t-{baseline}} Y(i)$$
+
+y
+
+$$S^2_1(t)= \frac{1}{6} ∑_{i=t-1}^{t-{baseline}} [Y(i) - \bar{Y}_1(i)]^2$$.
+
+Luego bajo la hipótesis nula de ausencia de brotes,
+
+$$C_1(t) \mathcal \> \sim \> {N}(0,1)$$
+
+Una alarma es alzada si:
+
+$$C_1(t)≥ z_{1-α}$$
+
+con $z_{1-α}$ el $(1-α)^{th}$ quantil de la distribución normal.
+
+El límite superior $U_1(t)$ está definido por:
+
+$$U_1(t)= \bar{Y}_1(t) + z_{1-α}S_1(t)$$.
+
+
+Empleamos el software de programación estadística R para la limpieza, manejo y 
+ejecución de las estimaciones.
+
+#### Referencias
+
+1. Salmon M, Schumacher D, Höhle M (2016). 
+“Monitoring Count Time Series in R: Aberration Detection
+in Public Health Surveillance.” _Journal of Statistical Software_, *70*(10), 
+1-35. doi:
+10.18637/jss.v070.i10 (URL: https://doi.org/10.18637/jss.v070.i10).
+
+#### Equipo
+
+**Información:** Noti / CDC MINSA - Reporte de Pruebas rapidas, SIS-COVID/ OGTI - reporte Netlab Pruebas moleculares / INS.
+
+**Análisis:** CDC MINSA
